@@ -1,9 +1,106 @@
 {
-  "名称": "药店健康陪伴边界基础记录",
-  "必填字段": [
-    "record_id",
-    "owner_id",
-    "state"
+  "名称": "药店健康陪伴边界台输入契约",
+  "边界声明": "系统只提供用药陪伴、依从记录、转诊建议与保供安排，不输出自行生成的诊断或治疗结论；所有出站响应经诊断断言守卫。",
+  "角色": ["customer", "pharmacist", "compliance", "sales", "system"],
+  "事项码": [
+    "med_reminder",
+    "adherence",
+    "med_plan",
+    "risk_review",
+    "referral",
+    "supply",
+    "handoff"
   ],
-  "说明": "该契约只描述现有登记能力，后续领域状态在此基础上扩展。"
+  "渠道码": ["sms", "app", "call"],
+  "核心规则": [
+    "药师处理任何记录前，资质（事项/有效期/门店）与顾客授权（事项/渠道/未撤回/版本）必须同时覆盖当前事项",
+    "风险 severity>=4：自动建议立即暂停计划并转交人工，同时生成转诊建议；severity=3 仅转人工",
+    "销售角色无权关闭异常信号；标识隔离案卷仅合规角色可隐私复核",
+    "新信息只能取消/重排未发送提醒；已发送提醒在数据库层禁止改写",
+    "依从反馈按 idempotency_key 幂等，重复提交返回原回执 receipt_no",
+    "撤回授权只取消未发送提醒并停止未来联系，已发送记录保留；法规要求保留的最小事实仅 compliance 可查",
+    "同一标识关联不同顾客健康内容时自动隔离，合规复核前阻断该标识下的新提醒与反馈",
+    "门店交接后保供责任转移至承接门店，到期提醒由调度器按原计划时间继续发送，发送前实时重判双重覆盖",
+    "所有状态变更进入同一条 SHA-256 哈希链审计日志，篡改任意历史载荷即断链"
+  ],
+  "用例": [
+    {
+      "方法": "grant_consent",
+      "必填": ["customer_id", "scopes", "channels"],
+      "说明": "登记授权版本；每次重新授权 version 自增"
+    },
+    {
+      "方法": "revoke_consent",
+      "必填": ["customer_id"],
+      "可选": ["reason"],
+      "说明": "撤回当前授权版本，取消全部未发送提醒"
+    },
+    {
+      "方法": "register_pharmacist",
+      "必填": ["pharmacist_id", "store_id", "license_no", "scopes", "valid_from", "valid_to"],
+      "说明": "登记或更新药师资质与执业范围"
+    },
+    {
+      "方法": "create_plan",
+      "必填": ["plan_id", "customer_id", "store_id", "medications"],
+      "说明": "药师创建药品计划，计划固定记录来源药师、门店与授权版本"
+    },
+    {
+      "方法": "schedule_reminder",
+      "必填": ["reminder_id", "plan_id", "medication", "scheduled_at", "channel"],
+      "说明": "排定未发送用药提醒"
+    },
+    {
+      "方法": "run_due",
+      "说明": "发送所有到期提醒；发送前实时双重覆盖判定，不满足时标记 blocked 并返回 skip_reason"
+    },
+    {
+      "方法": "adjust_pending",
+      "必填": ["plan_id", "changes.reminders"],
+      "说明": "取消未发送提醒并按新内容重排，已发送提醒不动"
+    },
+    {
+      "方法": "record_feedback",
+      "必填": ["plan_id", "content_code", "idempotency_key"],
+      "可选": ["detail"],
+      "content_code": ["taken", "missed", "side_effect", "concern"],
+      "说明": "登记顾客自述；命中风险规则时返回信号与转诊建议"
+    },
+    {
+      "方法": "close_signal",
+      "必填": ["signal_id", "note"],
+      "说明": "关闭异常信号；sales 角色被拒绝，药师另需资质与授权覆盖 risk_review"
+    },
+    {
+      "方法": "reserve_supply",
+      "必填": ["batch_id", "plan_id", "medication", "quantity", "backup_store_id", "due_at"],
+      "说明": "预留应急保供批次，责任门店取当前承接门店"
+    },
+    {
+      "方法": "initiate_handoff / complete_handoff",
+      "必填": ["handoff_id", "plan_id", "to_store_id", "to_pharmacist_id", "effective_at"],
+      "说明": "承接药师资质必须覆盖继续服务事项；完成时未了结保供批次随责转移"
+    },
+    {
+      "方法": "observe_identity / review_quarantine",
+      "必填": ["identifier", "customer_id", "health_content"],
+      "说明": "登记标识健康内容指纹；同一标识出现不同顾客内容自动隔离，合规复核后放行或阻断"
+    },
+    {
+      "方法": "customer_view / pharmacist_view / compliance_view",
+      "说明": "按角色返回权限内的计划来源、提醒与未提醒原因、转诊进度、保供责任与审计记录"
+    }
+  ],
+  "未提醒原因码": [
+    "consent_revoked",
+    "consent_scope_missing",
+    "consent_channel_missing",
+    "consent_version_stale",
+    "credential_scope_missing",
+    "credential_expired",
+    "credential_store_mismatch",
+    "identity_quarantined",
+    "plan_paused",
+    "plan_closed"
+  ]
 }
