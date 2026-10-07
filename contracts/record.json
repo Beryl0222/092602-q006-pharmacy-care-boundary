@@ -1,9 +1,82 @@
 {
-  "名称": "药店健康陪伴边界基础记录",
-  "必填字段": [
-    "record_id",
-    "owner_id",
-    "state"
+  "名称": "药店健康陪伴边界台操作契约",
+  "基础登记": {
+    "record_id": "唯一记录编号",
+    "owner_id": "记录责任方",
+    "state": "记录状态",
+    "revision": "正整数版本号，从 1 开始",
+    "必填字段": ["record_id", "owner_id", "state"]
+  },
+  "角色": ["customer", "pharmacist", "compliance", "sales"],
+  "事项词汇": [
+    "medication_reminder",
+    "adherence_review",
+    "referral",
+    "emergency_supply",
+    "counseling"
   ],
-  "说明": "该契约只描述现有登记能力，后续领域状态在此基础上扩展。"
+  "操作信封": {
+    "actor": {
+      "actor_id": "发起方标识",
+      "role": "四角色之一",
+      "pharmacist_id": "角色为 pharmacist 时必填",
+      "store_id": "所属门店"
+    },
+    "customer_id": "顾客标识",
+    "matter": "当前事项，取自事项词汇",
+    "at": "判定时刻（ISO-8601），用于资质有效期与授权版本判定",
+    "payload": "该操作的业务字段"
+  },
+  "边界规则": [
+    "药师资质与顾客当前授权版本必须同时覆盖当前事项，缺一即拒绝",
+    "授权撤回追加 withdrawn 版本，立即在全连锁停止未来联系；历史版本保留不删",
+    "新信息只调整 scheduled 任务；sent 任务作为历史事实冻结，不改写不删除",
+    "风险信号分值达到阈值(10)时自动暂停未发送任务、建议转诊并转交人工",
+    "异常关闭仅合规角色可执行，sales 角色显式无权",
+    "依从反馈以 idempotency_key 去重，重复提交沿用首次回执",
+    "同一 customer_id 出现不同健康内容时先 quarantine 隔离，暂停未发送提醒，合规复核后处置",
+    "门店交接承接后，未发送到期任务与在途保供批次责任转到新门店续跑",
+    "撤回后合规仅可查看法规要求的最小事实，健康内容一律屏蔽",
+    "任何系统生成文本不得包含诊断或治疗结论，统一附边界免责口径"
+  ],
+  "任务状态机": {
+    "scheduled": "未发送，可被新信息调整",
+    "sent": "已发送，永久冻结",
+    "skipped": "未发送而取消，skip_reason 取值：consent_withdrawn/scope_not_covered/quarantined/plan_adjusted/handover_pending",
+    "paused": "风险或隔离导致自动暂停"
+  },
+  "审计链": {
+    "表": "audit_log",
+    "区块字段": ["seq", "at", "actor_id", "action", "payload", "prev_hash", "entry_hash"],
+    "串联": "entry_hash = sha256(seq|at|actor_id|action|payload|prev_hash)，首块 prev_hash 为空",
+    "事务": "业务写入与审计追加在同一 SQLite 事务内提交",
+    "覆盖动作": [
+      "consent.append",
+      "consent.withdraw",
+      "credential.upsert",
+      "plan.import",
+      "task.schedule",
+      "task.send",
+      "task.skip",
+      "task.auto_pause",
+      "feedback.record",
+      "anomaly.open",
+      "anomaly.triage",
+      "anomaly.takeover",
+      "anomaly.close",
+      "referral.update",
+      "batch.create",
+      "batch.update",
+      "handover.open",
+      "handover.accept",
+      "privacy.quarantine",
+      "privacy.review"
+    ]
+  },
+  "角色视图": {
+    "customer": "计划来源、提醒及未提醒原因、转诊进度、保供责任；撤回后仅见停止事实与服务记录",
+    "pharmacist": "须通过双覆盖判定；可见授权版本、任务、反馈、异常、转诊、交接",
+    "compliance": "完整审计链；撤回后切换 minimal_facts，仅授权版本/计划来源/联系事实，健康内容 redacted"
+  },
+  "说明": "药店只提供用药依从陪伴与转诊协助，不替代诊断和治疗；本契约不含任何诊断接口。"
 }
